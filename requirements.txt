@@ -1,0 +1,33 @@
+# PRODUCTION READY: Full ML Stack
+# Restored for deployment when HuggingFace ban lifts
+
+# Core web framework
+fastapi
+uvicorn
+
+# HTTP requests and content extraction
+requests
+beautifulsoup4
+lxml
+
+# Machine Learning - Production Ready
+torch>=2.0.0
+transformers>=4.35.0
+
+# Data processing
+numpy
+
+# Utilities
+python-multipart
+
+# Logging and monitoring
+structlog
+
+# Phase 3: Availability & Hardening
+redis
+tenacity
+
+# Ancestor Health: Medical evidence retrieval & NLP
+httpx
+spacy
+scispacy
