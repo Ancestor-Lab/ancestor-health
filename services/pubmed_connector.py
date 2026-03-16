@@ -47,6 +47,116 @@ STOP_WORDS = frozenset({
     "what", "about", "also", "your", "their", "his", "her", "my",
 })
 
+# Medical term mapping: common phrases/biomarkers → standard PubMed search terms
+MEDICAL_TERM_MAP = {
+    # Biomarker names → medical terms
+    "white blood cell": "leukocyte",
+    "white blood cells": "leukocyte",
+    "wbc": "leukocyte",
+    "red blood cell": "erythrocyte",
+    "red blood cells": "erythrocyte",
+    "rbc": "erythrocyte",
+    "hemoglobin": "hemoglobin",
+    "hgb": "hemoglobin",
+    "hematocrit": "hematocrit",
+    "hct": "hematocrit",
+    "platelet": "platelet",
+    "platelets": "platelet count",
+    "plt": "platelet",
+    "blood sugar": "blood glucose",
+    "blood glucose": "blood glucose",
+    "fasting glucose": "fasting blood glucose",
+    "a1c": "glycated hemoglobin",
+    "hba1c": "glycated hemoglobin",
+    "hemoglobin a1c": "glycated hemoglobin",
+    "cholesterol": "cholesterol",
+    "ldl": "LDL cholesterol",
+    "hdl": "HDL cholesterol",
+    "triglycerides": "triglycerides",
+    "creatinine": "creatinine",
+    "bun": "blood urea nitrogen",
+    "gfr": "glomerular filtration rate",
+    "egfr": "estimated glomerular filtration rate",
+    "alt": "alanine aminotransferase",
+    "ast": "aspartate aminotransferase",
+    "bilirubin": "bilirubin",
+    "albumin": "serum albumin",
+    "tsh": "thyroid stimulating hormone",
+    "t3": "triiodothyronine",
+    "t4": "thyroxine",
+    "psa": "prostate specific antigen",
+    "crp": "C-reactive protein",
+    "esr": "erythrocyte sedimentation rate",
+    "inr": "international normalized ratio",
+    "ptt": "partial thromboplastin time",
+    "d-dimer": "D-dimer",
+    "ferritin": "ferritin",
+    "iron": "serum iron",
+    "vitamin d": "vitamin D",
+    "vitamin b12": "vitamin B12",
+    "folate": "folate",
+    "potassium": "potassium",
+    "sodium": "sodium",
+    "calcium": "calcium",
+    "magnesium": "magnesium",
+    "blood pressure": "blood pressure",
+    "systolic": "systolic blood pressure",
+    "diastolic": "diastolic blood pressure",
+    "heart rate": "heart rate",
+    "bmi": "body mass index",
+    "body mass index": "body mass index",
+    # Clinical conditions from lab context
+    "elevated white blood cell": "leukocytosis",
+    "high white blood cell": "leukocytosis",
+    "low white blood cell": "leukopenia",
+    "elevated wbc": "leukocytosis",
+    "low wbc": "leukopenia",
+    "low hemoglobin": "anemia",
+    "low hgb": "anemia",
+    "below normal hemoglobin": "anemia",
+    "low platelet": "thrombocytopenia",
+    "low platelets": "thrombocytopenia",
+    "high platelet": "thrombocytosis",
+    "high platelets": "thrombocytosis",
+    "high blood sugar": "hyperglycemia",
+    "low blood sugar": "hypoglycemia",
+    "high cholesterol": "hypercholesterolemia",
+    "high blood pressure": "hypertension",
+    "low blood pressure": "hypotension",
+    "high creatinine": "renal impairment",
+    "low gfr": "chronic kidney disease",
+    "high tsh": "hypothyroidism",
+    "low tsh": "hyperthyroidism",
+    "high psa": "prostate cancer screening",
+    "high crp": "inflammation",
+    "high esr": "inflammation",
+    # Common clinical phrases
+    "bacterial infection": "bacterial infection",
+    "viral infection": "viral infection",
+    "active infection": "acute infection",
+    "normal range": "reference range",
+    "below normal": "below reference range",
+    "above normal": "above reference range",
+    "slightly below": "mildly decreased",
+    "slightly above": "mildly elevated",
+    "adult males": "adult male reference",
+    "adult females": "adult female reference",
+    "complete blood count": "complete blood count",
+    "cbc": "complete blood count",
+    "metabolic panel": "metabolic panel",
+    "liver function": "liver function test",
+    "kidney function": "renal function",
+    "thyroid function": "thyroid function test",
+    "lipid panel": "lipid panel",
+}
+
+# Phrases to strip from claims before query building (noise)
+NOISE_PHRASES = [
+    r'\b\d+\.?\d*\s*(?:×\s*10[³⁹]\s*/?µ?[Ll]|g/d[Ll]|mg/d[Ll]|mmol/[Ll]|mEq/[Ll]|U/[Ll]|IU/[Ll]|ng/m[Ll]|pg/m[Ll]|%)\b',
+    r'\b\d+\.?\d*\s*(?:to|[-–])\s*\d+\.?\d*\b',  # ranges like "4.5-11.0"
+    r'\b(?:range|level|count|value|result|test|shows?|indicates?|suggests?|may|could|would|within|outside|reading)\b',
+]
+
 # Publication type weights for ranking
 PUB_TYPE_WEIGHTS = {
     "Systematic Review": 1.0,
@@ -138,29 +248,74 @@ class PubMedConnector:
     def build_search_query(self, claim_text: str) -> str:
         """
         Build a PubMed search query from claim text.
-        Strips stop words, extracts medical terms, adds publication type filters.
+        Maps common biomarker/clinical phrases to standard medical terms,
+        strips numeric values/units/noise, then builds a focused query.
         """
-        # Lowercase and extract words
-        words = re.findall(r'[a-zA-Z0-9]+', claim_text.lower())
+        claim_lower = claim_text.lower()
 
-        # Remove stop words
-        medical_terms = [w for w in words if w not in STOP_WORDS and len(w) > 2]
+        # Step 1: Extract mapped medical terms (longest match first)
+        mapped_terms = []
+        sorted_keys = sorted(MEDICAL_TERM_MAP.keys(), key=len, reverse=True)
+        used_spans = []
 
-        if not medical_terms:
-            # Fallback: use all non-trivial words
-            medical_terms = [w for w in words if len(w) > 2]
+        for phrase in sorted_keys:
+            idx = claim_lower.find(phrase)
+            if idx >= 0:
+                end = idx + len(phrase)
+                # Check no overlap with already-matched spans
+                if not any(s <= idx < e or s < end <= e for s, e in used_spans):
+                    mapped_term = MEDICAL_TERM_MAP[phrase]
+                    if mapped_term not in mapped_terms:
+                        mapped_terms.append(mapped_term)
+                    used_spans.append((idx, end))
 
-        if not medical_terms:
+        # Step 2: Strip noise (numbers, units, ranges, filler verbs)
+        cleaned = claim_lower
+        for pattern in NOISE_PHRASES:
+            cleaned = re.sub(pattern, ' ', cleaned)
+
+        # Step 3: Extract remaining medical words (not stop words, not already mapped)
+        remaining_words = re.findall(r'[a-zA-Z]+', cleaned)
+        mapped_lower = {t.lower() for t in mapped_terms}
+        extra_terms = []
+        for w in remaining_words:
+            wl = w.lower()
+            if (wl not in STOP_WORDS
+                    and len(wl) > 3
+                    and wl not in mapped_lower
+                    and not any(wl in t.lower() for t in mapped_terms)):
+                if wl not in extra_terms:
+                    extra_terms.append(wl)
+
+        # Step 4: Combine — mapped terms take priority, pad with extra terms
+        query_terms = mapped_terms[:4]
+        slots_left = 5 - len(query_terms)
+        if slots_left > 0:
+            query_terms.extend(extra_terms[:slots_left])
+
+        if not query_terms:
+            # Ultimate fallback: raw words
+            words = re.findall(r'[a-zA-Z0-9]+', claim_lower)
+            query_terms = [w for w in words if w not in STOP_WORDS and len(w) > 2][:5]
+
+        if not query_terms:
             return claim_text
 
-        # Build query: combine terms with AND, add review/guideline filter
-        term_query = " AND ".join(medical_terms[:6])  # Limit to 6 key terms
+        # Step 5: Build PubMed query with publication type filter
+        term_query = " AND ".join(f'"{t}"' if ' ' in t else t for t in query_terms)
         query = f"({term_query}) AND (review[pt] OR guideline[pt] OR systematic review[pt] OR meta-analysis[pt])"
 
         return query
 
     def _build_fallback_query(self, claim_text: str) -> str:
-        """Build a broader fallback query without publication type filters."""
+        """Build a broader fallback query without publication type filters.
+        Uses the same medical term mapping but drops the pub type filter."""
+        # Reuse the mapped query but strip the publication type filter
+        full_query = self.build_search_query(claim_text)
+        # Remove the pub type filter suffix
+        if ") AND (review[pt]" in full_query:
+            return full_query.split(") AND (review[pt]")[0] + ")"
+        # Final fallback: raw words
         words = re.findall(r'[a-zA-Z0-9]+', claim_text.lower())
         medical_terms = [w for w in words if w not in STOP_WORDS and len(w) > 2]
         if not medical_terms:

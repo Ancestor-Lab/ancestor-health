@@ -98,8 +98,10 @@ class NLIService:
         # Run inference
         result = self.nli_pipeline(input_text, top_k=None)
 
-        # Parse scores - roberta-large-mnli labels: CONTRADICTION, NEUTRAL, ENTAILMENT
+        # Parse scores — handle both LABEL_0/1/2 and named label formats
         scores = {item['label']: item['score'] for item in result}
+        if "LABEL_1" in scores:
+            return scores.get('LABEL_1', 0.0)  # LABEL_1 = entailment
         return scores.get('ENTAILMENT', 0.0)
 
     def _mock_predict_entailment(self, claim: str, source: str) -> float:
@@ -159,12 +161,22 @@ class NLIService:
             # Parse all probabilities
             raw_probabilities = {item['label']: item['score'] for item in result}
 
-            # Normalize to expected format (contradiction, entailment, neutral)
-            normalized_probs = {
-                "contradiction": raw_probabilities.get("CONTRADICTION", 0.0),
-                "entailment": raw_probabilities.get("ENTAILMENT", 0.0),
-                "neutral": raw_probabilities.get("NEUTRAL", 0.0)
-            }
+            # cross-encoder/nli-distilroberta-base uses LABEL_0/1/2:
+            #   LABEL_0 = contradiction, LABEL_1 = entailment, LABEL_2 = neutral
+            # Some models use CONTRADICTION/ENTAILMENT/NEUTRAL directly.
+            # Handle both label formats.
+            if "LABEL_0" in raw_probabilities:
+                normalized_probs = {
+                    "contradiction": raw_probabilities.get("LABEL_0", 0.0),
+                    "entailment": raw_probabilities.get("LABEL_1", 0.0),
+                    "neutral": raw_probabilities.get("LABEL_2", 0.0),
+                }
+            else:
+                normalized_probs = {
+                    "contradiction": raw_probabilities.get("CONTRADICTION", 0.0),
+                    "entailment": raw_probabilities.get("ENTAILMENT", 0.0),
+                    "neutral": raw_probabilities.get("NEUTRAL", 0.0),
+                }
 
             # Find most likely label
             predicted_label = max(normalized_probs.keys(), key=lambda k: normalized_probs[k])

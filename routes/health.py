@@ -238,9 +238,9 @@ async def _verify_single_claim(
     Runs NLI inference and computes multiplicative trust score.
     """
     try:
-        # Get NLI service
-        from services.nli_service import NLIService
-        nli_svc = NLIService()
+        # Get NLI service (reuse global instance)
+        from services.nli_service import get_nli_service
+        nli_svc = get_nli_service()
 
         # Run NLI: claim vs evidence snippet
         nli_result = nli_svc.analyze_claim_evidence(
