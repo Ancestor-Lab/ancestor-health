@@ -205,17 +205,19 @@ async def _verify_all_claims(
     retrieval_latency = 0
     sources_queried_set = set()
 
-    # Process claims — retrieve evidence for all in parallel
-    evidence_tasks = []
+    # Process claims sequentially to respect NCBI rate limits (10 req/s with API key).
+    # Each claim does ESearch + EFetch (2-3 requests), so parallel would exceed limits.
+    evidence_results = []
     for claim in claims:
-        evidence_tasks.append(
-            _retriever.retrieve(
+        try:
+            result = await _retriever.retrieve(
                 claim=claim,
                 sources=options.evidence_sources,
             )
-        )
-
-    evidence_results = await asyncio.gather(*evidence_tasks, return_exceptions=True)
+            evidence_results.append(result)
+        except Exception as e:
+            evidence_results.append(e)
+        await asyncio.sleep(0.2)  # Rate limit spacing
 
     # Process each claim's evidence through verification
     for claim, evidence_result in zip(claims, evidence_results):
