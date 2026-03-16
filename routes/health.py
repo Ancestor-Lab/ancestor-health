@@ -80,42 +80,9 @@ async def verify_health(request: HealthVerifyRequest, background_tasks: Backgrou
     if not claims:
         raise HTTPException(status_code=422, detail="No verifiable claims extracted from input text")
 
-    # Decide sync vs async
-    estimated_ms = len(claims) * 2000  # ~2s per claim (PubMed + NLI)
-    elapsed_ms = int((time.monotonic() - start_time) * 1000)
-
-    if options.allow_async and estimated_ms > SYNC_BUDGET_MS and len(claims) > 1:
-        # Async path
-        job_id = uuid.uuid4()
-        _jobs[str(job_id)] = {
-            "status": "ASYNC_PENDING",
-            "verification_id": str(verification_id),
-            "result": None,
-            "error": None,
-        }
-
-        background_tasks.add_task(
-            _run_verification_job,
-            job_id=job_id,
-            verification_id=verification_id,
-            claims=claims,
-            input_data=input_data,
-            options=options,
-            start_time=start_time,
-        )
-
-        response = HealthVerifyAsyncResponse(
-            verification_id=verification_id,
-            job_id=job_id,
-            claims_extracted=len(claims),
-            poll_url=f"/v1/health/verify/jobs/{job_id}",
-            estimated_completion_ms=estimated_ms,
-        )
-        # Return 202
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=202, content=response.model_dump(mode="json"))
-
-    # Sync path — process all claims now
+    # Process synchronously — Cloud Run timeout is 300s which handles multi-claim verification.
+    # Async with in-memory job store doesn't work reliably with Cloud Run autoscaling
+    # (POST and GET may hit different instances). Future: use Redis for job state.
     try:
         result = await _verify_all_claims(
             verification_id=verification_id,
