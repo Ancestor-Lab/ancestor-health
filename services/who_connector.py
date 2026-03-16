@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 WHO_GHO_BASE_URL = os.environ.get(
     "WHO_GHO_BASE_URL", "https://ghoapi.azureedge.net/api"
 )
-WHO_TIMEOUT = 5.0  # seconds
+WHO_TIMEOUT = 15.0  # seconds (increased for VPC egress latency)
 
 
 # --- Interface ---

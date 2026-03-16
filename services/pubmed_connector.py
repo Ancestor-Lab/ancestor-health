@@ -28,7 +28,7 @@ NCBI_EMAIL = os.environ.get("NCBI_EMAIL", "")
 NCBI_TOOL_NAME = os.environ.get("NCBI_TOOL_NAME", "ancestor-health")
 
 # Request config
-QUERY_TIMEOUT = 5.0  # seconds
+QUERY_TIMEOUT = 15.0  # seconds (increased for VPC egress latency)
 MAX_RESULTS = 10
 
 # Stop words to strip from claim text before building queries

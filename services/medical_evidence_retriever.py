@@ -18,7 +18,7 @@ from .health_claim_extractor import ExtractedClaim
 
 logger = logging.getLogger(__name__)
 
-EVIDENCE_TIMEOUT = 5.0  # seconds per source
+EVIDENCE_TIMEOUT = 20.0  # seconds per source (generous for VPC egress)
 
 
 @dataclass
