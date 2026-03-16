@@ -98,11 +98,11 @@ class NLIService:
         # Run inference
         result = self.nli_pipeline(input_text, top_k=None)
 
-        # Parse scores — handle both LABEL_0/1/2 and named label formats
-        scores = {item['label']: item['score'] for item in result}
-        if "LABEL_1" in scores:
-            return scores.get('LABEL_1', 0.0)  # LABEL_1 = entailment
-        return scores.get('ENTAILMENT', 0.0)
+        # Parse scores — normalize to lowercase for all label formats
+        scores = {item['label'].lower(): item['score'] for item in result}
+        if "label_1" in scores:
+            return scores.get('label_1', 0.0)  # label_1 = entailment
+        return scores.get('entailment', 0.0)
 
     def _mock_predict_entailment(self, claim: str, source: str) -> float:
         """Mock entailment prediction with deterministic logic."""
@@ -158,24 +158,24 @@ class NLIService:
             # Run inference
             result = self.nli_pipeline(input_text, top_k=None)
 
-            # Parse all probabilities
-            raw_probabilities = {item['label']: item['score'] for item in result}
+            # Parse all probabilities — normalize labels to lowercase
+            raw_probabilities = {item['label'].lower(): item['score'] for item in result}
+            logger.info(f"NLI raw output labels: {raw_probabilities}")
 
-            # cross-encoder/nli-distilroberta-base uses LABEL_0/1/2:
-            #   LABEL_0 = contradiction, LABEL_1 = entailment, LABEL_2 = neutral
-            # Some models use CONTRADICTION/ENTAILMENT/NEUTRAL directly.
-            # Handle both label formats.
-            if "LABEL_0" in raw_probabilities:
+            # Handle all label formats:
+            #   - Named: "contradiction"/"entailment"/"neutral" (from id2label config)
+            #   - Indexed: "label_0"/"label_1"/"label_2" (no id2label)
+            if "label_0" in raw_probabilities:
                 normalized_probs = {
-                    "contradiction": raw_probabilities.get("LABEL_0", 0.0),
-                    "entailment": raw_probabilities.get("LABEL_1", 0.0),
-                    "neutral": raw_probabilities.get("LABEL_2", 0.0),
+                    "contradiction": raw_probabilities.get("label_0", 0.0),
+                    "entailment": raw_probabilities.get("label_1", 0.0),
+                    "neutral": raw_probabilities.get("label_2", 0.0),
                 }
             else:
                 normalized_probs = {
-                    "contradiction": raw_probabilities.get("CONTRADICTION", 0.0),
-                    "entailment": raw_probabilities.get("ENTAILMENT", 0.0),
-                    "neutral": raw_probabilities.get("NEUTRAL", 0.0),
+                    "contradiction": raw_probabilities.get("contradiction", 0.0),
+                    "entailment": raw_probabilities.get("entailment", 0.0),
+                    "neutral": raw_probabilities.get("neutral", 0.0),
                 }
 
             # Find most likely label

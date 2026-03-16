@@ -130,31 +130,36 @@ MEDICAL_TERM_MAP = {
     "high psa": "prostate cancer screening",
     "high crp": "inflammation",
     "high esr": "inflammation",
-    # Common clinical phrases
+    # Common clinical phrases → keep simple PubMed-friendly terms
     "bacterial infection": "bacterial infection",
     "viral infection": "viral infection",
-    "active infection": "acute infection",
-    "normal range": "reference range",
-    "below normal": "below reference range",
-    "above normal": "above reference range",
-    "slightly below": "mildly decreased",
-    "slightly above": "mildly elevated",
-    "adult males": "adult male reference",
-    "adult females": "adult female reference",
+    "active infection": "infection",
+    "normal range": "reference values",
+    "normal reference range": "reference values",
+    "below normal": "anemia",  # context-dependent but common
+    "above normal": "elevated",
+    "slightly below": None,  # noise — skip
+    "slightly above": None,  # noise — skip
+    "adult males": None,  # noise — skip
+    "adult females": None,  # noise — skip
     "complete blood count": "complete blood count",
     "cbc": "complete blood count",
     "metabolic panel": "metabolic panel",
-    "liver function": "liver function test",
+    "liver function": "liver function",
     "kidney function": "renal function",
-    "thyroid function": "thyroid function test",
+    "thyroid function": "thyroid function",
     "lipid panel": "lipid panel",
+    # Anemia-specific
+    "mild anemia": "anemia",
+    "indicating mild anemia": "anemia",
+    "indicating anemia": "anemia",
 }
 
 # Phrases to strip from claims before query building (noise)
 NOISE_PHRASES = [
     r'\b\d+\.?\d*\s*(?:×\s*10[³⁹]\s*/?µ?[Ll]|g/d[Ll]|mg/d[Ll]|mmol/[Ll]|mEq/[Ll]|U/[Ll]|IU/[Ll]|ng/m[Ll]|pg/m[Ll]|%)\b',
     r'\b\d+\.?\d*\s*(?:to|[-–])\s*\d+\.?\d*\b',  # ranges like "4.5-11.0"
-    r'\b(?:range|level|count|value|result|test|shows?|indicates?|suggests?|may|could|would|within|outside|reading)\b',
+    r'\b(?:range|level|count|value|result|test|shows?|indicates?|suggests?|may|could|would|within|outside|reading|falls?|possible|slightly|elevated|normal|above|below)\b',
 ]
 
 # Publication type weights for ranking
@@ -265,7 +270,7 @@ class PubMedConnector:
                 # Check no overlap with already-matched spans
                 if not any(s <= idx < e or s < end <= e for s, e in used_spans):
                     mapped_term = MEDICAL_TERM_MAP[phrase]
-                    if mapped_term not in mapped_terms:
+                    if mapped_term is not None and mapped_term not in mapped_terms:
                         mapped_terms.append(mapped_term)
                     used_spans.append((idx, end))
 
@@ -287,9 +292,9 @@ class PubMedConnector:
                 if wl not in extra_terms:
                     extra_terms.append(wl)
 
-        # Step 4: Combine — mapped terms take priority, pad with extra terms
-        query_terms = mapped_terms[:4]
-        slots_left = 5 - len(query_terms)
+        # Step 4: Combine — mapped terms take priority, limit to 3 AND terms total
+        query_terms = mapped_terms[:3]
+        slots_left = 3 - len(query_terms)
         if slots_left > 0:
             query_terms.extend(extra_terms[:slots_left])
 
