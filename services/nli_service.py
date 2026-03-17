@@ -26,6 +26,24 @@ KILL_SWITCH_THRESHOLD = 0.5    # Contradiction > 0.5 → BLOCKED_CONTRADICTION
 SUPPORT_THRESHOLD = 0.7        # Entailment ≥ 0.7 → SUPPORTED
 UNVERIFIABLE_FLOOR = 0.4       # Entailment ≤ 0.4 → UNVERIFIABLE
 
+# Threshold profiles — selectable per endpoint
+THRESHOLD_PROFILES = {
+    "default": {
+        "kill_switch": 0.5,
+        "supported": 0.7,
+        "partial_support": None,  # not used in default profile
+        "inconclusive_floor": 0.4,
+        "unverifiable_floor": 0.4,
+    },
+    "health": {
+        "kill_switch": 0.5,       # unchanged — hard safety constraint
+        "supported": 0.4,         # medical abstracts provide topical support ~0.3-0.5
+        "partial_support": 0.25,  # directionally supportive but not strong entailment
+        "inconclusive_floor": 0.1,
+        "unverifiable_floor": 0.1,
+    },
+}
+
 class NLIService:
     """
     PRODUCTION: Native Transformers Pipeline NLI Service - NO WRAPPERS, NO BLOAT.
@@ -232,13 +250,15 @@ class NLIService:
         }
 
     def apply_production_decision_thresholds(self, raw_probabilities: Dict[str, float],
-                                           source_available: bool = True) -> Dict[str, Any]:
+                                           source_available: bool = True,
+                                           profile: str = "default") -> Dict[str, Any]:
         """
-        Apply frozen production decision thresholds.
+        Apply decision thresholds from a named profile.
 
         Args:
             raw_probabilities: Raw NLI probabilities
             source_available: Whether source was successfully fetched
+            profile: Threshold profile name ("default" or "health")
 
         Returns:
             Dict containing production decision
@@ -250,33 +270,40 @@ class NLIService:
                 "threshold_applied": "SOURCE_UNAVAILABLE"
             }
 
+        thresholds = THRESHOLD_PROFILES.get(profile, THRESHOLD_PROFILES["default"])
         contradiction_prob = raw_probabilities.get("contradiction", 0.0)
         entailment_prob = raw_probabilities.get("entailment", 0.0)
 
-        # Apply frozen thresholds
-        if contradiction_prob > KILL_SWITCH_THRESHOLD:
+        # Kill switch — same across all profiles
+        if contradiction_prob > thresholds["kill_switch"]:
             return {
                 "verification_status": "BLOCKED_CONTRADICTION",
                 "confidence": contradiction_prob,
-                "threshold_applied": f"KILL_SWITCH (>{KILL_SWITCH_THRESHOLD})"
+                "threshold_applied": f"KILL_SWITCH (>{thresholds['kill_switch']})"
             }
-        elif entailment_prob >= SUPPORT_THRESHOLD:
+        elif entailment_prob >= thresholds["supported"]:
             return {
                 "verification_status": "SUPPORTED",
                 "confidence": entailment_prob,
-                "threshold_applied": f"SUPPORT (>={SUPPORT_THRESHOLD})"
+                "threshold_applied": f"SUPPORT (>={thresholds['supported']})"
             }
-        elif entailment_prob <= UNVERIFIABLE_FLOOR:
+        elif thresholds["partial_support"] is not None and entailment_prob >= thresholds["partial_support"]:
+            return {
+                "verification_status": "PARTIAL_SUPPORT",
+                "confidence": entailment_prob,
+                "threshold_applied": f"PARTIAL_SUPPORT (>={thresholds['partial_support']})"
+            }
+        elif entailment_prob <= thresholds["unverifiable_floor"]:
             return {
                 "verification_status": "UNVERIFIABLE",
                 "confidence": entailment_prob,
-                "threshold_applied": f"UNVERIFIABLE (<={UNVERIFIABLE_FLOOR})"
+                "threshold_applied": f"UNVERIFIABLE (<={thresholds['unverifiable_floor']})"
             }
         else:
             return {
                 "verification_status": "INCONCLUSIVE",
                 "confidence": entailment_prob,
-                "threshold_applied": f"GREY_ZONE ({UNVERIFIABLE_FLOOR}-{SUPPORT_THRESHOLD})"
+                "threshold_applied": f"INCONCLUSIVE ({thresholds['unverifiable_floor']}-{thresholds['supported']})"
             }
 
     def get_model_info(self) -> Dict[str, Any]:

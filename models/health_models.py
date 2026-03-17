@@ -74,7 +74,7 @@ class SemanticResult(BaseModel):
 
 class ClaimVerification(BaseModel):
     verification_id: UUID = Field(default_factory=uuid4)
-    status: str  # VERIFIED | CONTRADICTION | VERIFICATION_FAILURE | NO_EVIDENCE_FOUND
+    status: str  # VERIFIED | PARTIAL_SUPPORT | INCONCLUSIVE | CONTRADICTION | VERIFICATION_FAILURE | NO_EVIDENCE_FOUND
     trust_score: Optional[float] = None
     score_breakdown: Optional[ScoreBreakdown] = None
     source: Optional[SourceInfo] = None

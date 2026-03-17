@@ -252,8 +252,13 @@ async def _verify_single_claim(
         contradiction_prob = probs.get("contradiction", 0.0)
         entailment_prob = probs.get("entailment", 0.0)
 
+        # Apply health threshold profile for status determination
+        decision = nli_svc.apply_production_decision_thresholds(
+            probs, source_available=True, profile="health"
+        )
+
         # Kill switch: contradiction > 0.5 → trust score = 0
-        if contradiction_prob > 0.5:
+        if decision["verification_status"] == "BLOCKED_CONTRADICTION":
             return ClaimResult(
                 claim_id=uuid.UUID(claim.claim_id),
                 claim_text=claim.claim_text,
@@ -284,13 +289,16 @@ async def _verify_single_claim(
 
         trust_score = authority * availability * entailment
 
-        # Determine status
-        if trust_score >= options.min_trust_threshold:
+        # Map NLI decision to verification status
+        nli_status = decision["verification_status"]
+        if nli_status == "SUPPORTED":
             status = "VERIFIED"
-        elif entailment_prob <= 0.4:
+        elif nli_status == "PARTIAL_SUPPORT":
+            status = "PARTIAL_SUPPORT"
+        elif nli_status == "UNVERIFIABLE":
             status = "VERIFICATION_FAILURE"
         else:
-            status = "VERIFIED"  # Above threshold counts as verified
+            status = "INCONCLUSIVE"
 
         return ClaimResult(
             claim_id=uuid.UUID(claim.claim_id),
@@ -362,7 +370,7 @@ def _compute_summary(
 
     for cr in claim_results:
         v = cr.verification
-        if v.status == "VERIFIED":
+        if v.status in ("VERIFIED", "PARTIAL_SUPPORT"):
             verified += 1
             if v.trust_score is not None:
                 scores.append(v.trust_score)

@@ -243,6 +243,7 @@ class PubMedArticle:
     pmid: str
     title: str
     abstract: str
+    conclusion_snippet: str = ""  # CONCLUSIONS/RESULTS section for NLI input
     publication_date: Optional[str] = None
     doi: Optional[str] = None
     journal: Optional[str] = None
@@ -503,16 +504,33 @@ class PubMedConnector:
         title_elem = elem.find(".//ArticleTitle")
         title = title_elem.text if title_elem is not None else ""
 
-        # Abstract
+        # Abstract — parse structured sections for conclusion extraction
         abstract_parts = []
+        section_map = {}  # label → text for structured abstracts
         for abs_text in elem.findall(".//AbstractText"):
             label = abs_text.get("Label", "")
             text = abs_text.text or ""
             if label:
                 abstract_parts.append(f"{label}: {text}")
+                section_map[label.upper()] = text
             else:
                 abstract_parts.append(text)
         abstract = " ".join(abstract_parts)
+
+        # Extract conclusion snippet: CONCLUSIONS > RESULTS > FINDINGS > last section
+        conclusion_snippet = ""
+        for priority_label in ["CONCLUSIONS", "CONCLUSION", "RESULTS", "FINDINGS", "RESULTS AND CONCLUSIONS"]:
+            if priority_label in section_map and section_map[priority_label].strip():
+                conclusion_snippet = section_map[priority_label].strip()
+                break
+        if not conclusion_snippet and section_map:
+            # Use the last labelled section (conclusions typically come last)
+            last_label = list(section_map.keys())[-1]
+            conclusion_snippet = section_map[last_label].strip()
+        if not conclusion_snippet and abstract:
+            # Unstructured abstract: use the last paragraph (after last period-space)
+            sentences = abstract.rsplit(". ", 1)
+            conclusion_snippet = sentences[-1].strip() if len(sentences) > 1 else abstract[-500:]
 
         # Publication date
         pub_date = self._extract_pub_date(elem)
@@ -538,6 +556,7 @@ class PubMedConnector:
             pmid=pmid,
             title=title or "",
             abstract=abstract,
+            conclusion_snippet=conclusion_snippet,
             publication_date=pub_date,
             doi=doi,
             journal=journal,
@@ -628,40 +647,29 @@ class PubMedConnector:
         return round(min(relevance, 1.0), 4)
 
     def _extract_best_snippet(self, article: PubMedArticle, claim_text: str) -> str:
-        """Extract the most relevant paragraph from the abstract."""
+        """Extract the most relevant snippet from the abstract for NLI input.
+        Prefers conclusion/results sections over full abstract — these contain
+        the finding statement which scores much higher on NLI entailment."""
+        # Priority 1: Use conclusion_snippet if available and non-trivial
+        if article.conclusion_snippet and len(article.conclusion_snippet) > 30:
+            snippet = article.conclusion_snippet[:500]
+            if not snippet.endswith("."):
+                snippet += "."
+            return snippet
+
         if not article.abstract:
             return article.title
 
-        # Split abstract into paragraphs/sections
+        # Priority 2: Last paragraph of unstructured abstract (conclusion position)
         paragraphs = [p.strip() for p in article.abstract.split(". ") if len(p.strip()) > 20]
+        if paragraphs:
+            # Take the last 1-2 sentences — conclusions come last
+            last_para = paragraphs[-1]
+            if not last_para.endswith("."):
+                last_para += "."
+            return last_para
 
-        if not paragraphs:
-            return article.abstract[:500]
-
-        # Score each paragraph by term overlap with the claim
-        claim_terms = set(
-            w.lower() for w in re.findall(r'[a-zA-Z0-9]+', claim_text)
-            if w.lower() not in STOP_WORDS and len(w) > 2
-        )
-
-        best_para = article.abstract[:500]
-        best_score = 0.0
-
-        for para in paragraphs:
-            para_terms = set(
-                w.lower() for w in re.findall(r'[a-zA-Z0-9]+', para)
-                if w not in STOP_WORDS and len(w) > 2
-            )
-            if para_terms:
-                overlap = len(claim_terms & para_terms) / max(len(claim_terms), 1)
-                if overlap > best_score:
-                    best_score = overlap
-                    best_para = para
-
-        # Return the best paragraph, ensuring it ends with a period
-        if not best_para.endswith("."):
-            best_para += "."
-        return best_para
+        return article.abstract[:500]
 
     async def __aenter__(self):
         return self
