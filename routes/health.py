@@ -7,13 +7,30 @@ GET /v1/health/verify/jobs/{job_id} — polls async job results.
 """
 
 import asyncio
+import os
 import time
 import uuid
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+ANCESTOR_HEALTH_API_KEY = os.environ.get("ANCESTOR_HEALTH_API_KEY", "")
+
+_security = HTTPBearer(auto_error=False)
+
+
+async def verify_api_key(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
+):
+    """Check Bearer token against ANCESTOR_HEALTH_API_KEY.
+    If the env var is not set, skip auth entirely (local dev mode)."""
+    if not ANCESTOR_HEALTH_API_KEY:
+        return  # no key configured — allow all requests
+    if credentials is None or credentials.credentials != ANCESTOR_HEALTH_API_KEY:
+        raise HTTPException(status_code=401, detail={"error": "Invalid API key"})
 
 from models.health_models import (
     HealthVerifyRequest,
@@ -50,7 +67,7 @@ SYNC_BUDGET_MS = 800
 SCORE_VERSION = "1.4.2"
 
 
-@router.post("/verify", status_code=200)
+@router.post("/verify", status_code=200, dependencies=[Depends(verify_api_key)])
 async def verify_health(request: HealthVerifyRequest, background_tasks: BackgroundTasks):
     """
     Verify AI-generated health text.
@@ -97,7 +114,7 @@ async def verify_health(request: HealthVerifyRequest, background_tasks: Backgrou
         raise HTTPException(status_code=500, detail=f"Verification failed: {e}")
 
 
-@router.get("/verify/jobs/{job_id}")
+@router.get("/verify/jobs/{job_id}", dependencies=[Depends(verify_api_key)])
 async def get_job_status(job_id: str):
     """Poll async verification job status."""
     job = _jobs.get(job_id)
