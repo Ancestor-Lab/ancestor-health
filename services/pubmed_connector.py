@@ -342,9 +342,19 @@ class PubMedConnector:
         # Sort by length descending — longer words are more specific/medical
         extra_terms = sorted(extra_terms_list, key=len, reverse=True)
 
-        # Step 4: Combine — mapped terms take priority, limit to 3 AND terms total
-        query_terms = mapped_terms[:3]
-        slots_left = 3 - len(query_terms)
+        # Step 4: Detect claim intent to shape query construction
+        intent = self._detect_claim_intent(claim_lower)
+
+        # Step 5: Combine terms — intent determines how many mapped terms to use
+        # Leave room for intent-specific terms by limiting core terms
+        if intent in ("diagnostic", "above_below_range", "within_range"):
+            # Intent adds 1 term, so limit core to 2
+            query_terms = mapped_terms[:2]
+            slots_left = 2 - len(query_terms)
+        else:
+            query_terms = mapped_terms[:3]
+            slots_left = 3 - len(query_terms)
+
         if slots_left > 0:
             query_terms.extend(extra_terms[:slots_left])
 
@@ -356,8 +366,6 @@ class PubMedConnector:
         if not query_terms:
             return claim_text
 
-        # Step 5: Detect claim intent and add intent-specific query terms
-        intent = self._detect_claim_intent(claim_lower)
         intent_boost = self._build_intent_boost(intent, query_terms)
 
         # Step 6: Build PubMed query with publication type filter
@@ -410,11 +418,10 @@ class PubMedConnector:
         qt_lower = {t.lower() for t in query_terms}
 
         if intent == "diagnostic":
-            # Biomarker → condition claims need diagnostic/clinical significance context
-            boost_parts = []
-            if "diagnosis" not in qt_lower and "clinical significance" not in qt_lower:
-                boost_parts.append('(diagnosis OR "clinical significance" OR etiology)')
-            return " AND " + " AND ".join(boost_parts) if boost_parts else ""
+            # Biomarker → condition claims: add diagnostic context
+            if "diagnosis" not in qt_lower:
+                return ' AND (diagnosis OR "clinical significance" OR pathophysiology)'
+            return ""
 
         elif intent == "above_below_range":
             # Value above/below normal → need reference range definitions
@@ -423,7 +430,7 @@ class PubMedConnector:
             return ""
 
         elif intent == "within_range":
-            # Value within normal range → target reference value articles specifically
+            # Value within normal range → target reference value articles
             if "reference values" not in qt_lower:
                 return ' AND "reference values"[MeSH]'
             return ""
