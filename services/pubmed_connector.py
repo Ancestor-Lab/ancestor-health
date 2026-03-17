@@ -356,9 +356,22 @@ class PubMedConnector:
         if not query_terms:
             return claim_text
 
-        # Step 5: Build PubMed query with publication type filter
+        # Step 5: For reference range claims, add "reference values" to find
+        # articles that define normal ranges rather than clinical management
+        is_reference_claim = any(
+            phrase in claim_lower
+            for phrase in ["normal range", "reference range", "within the normal",
+                           "below the normal", "above the normal", "falls within"]
+        )
+        if is_reference_claim and "reference values" not in query_terms:
+            # Append as OR to broaden, not narrow
+            ref_boost = ' AND ("reference values"[MeSH] OR "reference interval")'
+        else:
+            ref_boost = ""
+
+        # Step 6: Build PubMed query with publication type filter
         term_query = " AND ".join(f'"{t}"' if ' ' in t else t for t in query_terms)
-        query = f"({term_query}) AND (review[pt] OR guideline[pt] OR systematic review[pt] OR meta-analysis[pt])"
+        query = f"({term_query}{ref_boost}) AND (review[pt] OR guideline[pt] OR systematic review[pt] OR meta-analysis[pt])"
 
         return query
 

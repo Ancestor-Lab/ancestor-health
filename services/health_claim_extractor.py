@@ -313,7 +313,8 @@ class HealthClaimExtractor:
     ) -> list[tuple[str, int, int, str]]:
         """
         Split compound claims containing 'and'/'or' into atomic claims.
-        Only splits when both halves look like separate claims.
+        Only splits when both halves are grammatically complete (subject + verb).
+        A longer compound claim is better than a broken fragment.
         """
         # Don't split short sentences
         if len(text) < 60:
@@ -322,25 +323,58 @@ class HealthClaimExtractor:
         # Try splitting on "or" for condition alternatives
         parts = re.split(r'\s+or\s+', text, maxsplit=1)
         if len(parts) == 2 and len(parts[0]) > 20 and len(parts[1]) > 15:
-            # Check if the second part needs the subject from the first
+            # Check if second part is already a complete clause (has its own verb)
+            if self._is_complete_clause(parts[1]):
+                results = []
+                offset = start
+                for part in parts:
+                    part = part.strip()
+                    if len(part) > 15:
+                        results.append((part, offset, offset + len(part), claim_type))
+                    offset += len(part) + 4  # " or "
+                if results:
+                    return results
+
+            # Second part is a noun phrase (e.g. "inflammatory response").
+            # Only split if we can form a grammatically valid sentence.
             if not parts[1][0].isupper() and not re.match(r'\d', parts[1]):
-                # Carry forward the subject
-                subject_match = re.match(r'^(.+?\s+(?:may|could|might|can)\s+)', parts[0])
+                subject_match = re.match(
+                    r'^(.+?\s+(?:may|could|might|can)\s+(?:indicate|suggest|cause|lead\s+to|be|mean|result\s+in)\s+)',
+                    parts[0],
+                )
                 if subject_match:
                     prefix = subject_match.group(1)
-                    parts[1] = prefix + parts[1]
+                    candidate = prefix + parts[1]
+                    # Validate: the word after prefix must not create nonsense
+                    # (prefix ends with verb like "indicate ", so next word should be a/an/the/noun)
+                    if self._is_complete_clause(candidate):
+                        results = []
+                        offset = start
+                        for i, part in enumerate([parts[0].strip(), candidate.strip()]):
+                            if len(part) > 15:
+                                results.append((part, offset, offset + len(part), claim_type))
+                            offset += len(parts[i]) + 4
+                        if results:
+                            return results
 
-            results = []
-            offset = start
-            for part in parts:
-                part = part.strip()
-                if len(part) > 15:
-                    results.append((part, offset, offset + len(part), claim_type))
-                offset += len(part) + 4  # " or "
-            if results:
-                return results
-
+        # Don't split — keep as single compound claim
         return [(text, start, start + len(text), claim_type)]
+
+    def _is_complete_clause(self, text: str) -> bool:
+        """Check if text is a grammatically complete clause (has subject + verb)."""
+        text_lower = text.strip().lower()
+        # Must contain at least one verb-like word
+        has_verb = bool(re.search(
+            r'\b(?:is|are|was|were|be|been|being|has|have|had|do|does|did|'
+            r'may|could|might|can|will|would|should|shall|'
+            r'indicate[s]?|suggest[s]?|show[s]?|cause[s]?|lead[s]?|'
+            r'reduce[s]?|increase[s]?|affect[s]?|fall[s]?|'
+            r'mean[s]?|result[s]?|occur[s]?|include[s]?|require[s]?)\b',
+            text_lower,
+        ))
+        # Must have at least 4 words (subject + verb + object minimum)
+        has_enough_words = len(text_lower.split()) >= 4
+        return has_verb and has_enough_words
 
     def _ensure_self_contained(
         self,
