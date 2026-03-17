@@ -323,8 +323,11 @@ class HealthClaimExtractor:
         # Try splitting on "or" for condition alternatives
         parts = re.split(r'\s+or\s+', text, maxsplit=1)
         if len(parts) == 2 and len(parts[0]) > 20 and len(parts[1]) > 15:
-            # Check if second part is already a complete clause (has its own verb)
-            if self._is_complete_clause(parts[1]):
+            # Only split if BOTH parts are independently complete clauses.
+            # A noun phrase like "inflammatory response" is not a clause —
+            # keeping "X may indicate infection or inflammatory response"
+            # as one claim is better than injecting a prefix to make it look valid.
+            if self._is_complete_clause(parts[0]) and self._is_complete_clause(parts[1]):
                 results = []
                 offset = start
                 for part in parts:
@@ -334,28 +337,6 @@ class HealthClaimExtractor:
                     offset += len(part) + 4  # " or "
                 if results:
                     return results
-
-            # Second part is a noun phrase (e.g. "inflammatory response").
-            # Only split if we can form a grammatically valid sentence.
-            if not parts[1][0].isupper() and not re.match(r'\d', parts[1]):
-                subject_match = re.match(
-                    r'^(.+?\s+(?:may|could|might|can)\s+(?:indicate|suggest|cause|lead\s+to|be|mean|result\s+in)\s+)',
-                    parts[0],
-                )
-                if subject_match:
-                    prefix = subject_match.group(1)
-                    candidate = prefix + parts[1]
-                    # Validate: the word after prefix must not create nonsense
-                    # (prefix ends with verb like "indicate ", so next word should be a/an/the/noun)
-                    if self._is_complete_clause(candidate):
-                        results = []
-                        offset = start
-                        for i, part in enumerate([parts[0].strip(), candidate.strip()]):
-                            if len(part) > 15:
-                                results.append((part, offset, offset + len(part), claim_type))
-                            offset += len(parts[i]) + 4
-                        if results:
-                            return results
 
         # Don't split — keep as single compound claim
         return [(text, start, start + len(text), claim_type)]
