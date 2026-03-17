@@ -153,6 +153,50 @@ MEDICAL_TERM_MAP = {
     "mild anemia": "anemia",
     "indicating mild anemia": "anemia",
     "indicating anemia": "anemia",
+    # Common health conditions and associations
+    "cardiovascular disease": "cardiovascular disease",
+    "heart disease": "cardiovascular disease",
+    "coronary artery disease": "coronary artery disease",
+    "heart attack": "myocardial infarction",
+    "myocardial infarction": "myocardial infarction",
+    "stroke": "stroke",
+    "lung cancer": "lung cancer",
+    "breast cancer": "breast cancer",
+    "colon cancer": "colorectal cancer",
+    "colorectal cancer": "colorectal cancer",
+    "prostate cancer": "prostate cancer",
+    "diabetes": "diabetes mellitus",
+    "type 2 diabetes": "type 2 diabetes mellitus",
+    "type 1 diabetes": "type 1 diabetes mellitus",
+    "asthma": "asthma",
+    "copd": "chronic obstructive pulmonary disease",
+    "chronic obstructive pulmonary disease": "COPD",
+    "pneumonia": "pneumonia",
+    "sepsis": "sepsis",
+    "kidney disease": "chronic kidney disease",
+    "liver disease": "liver disease",
+    "alzheimer": "Alzheimer disease",
+    "dementia": "dementia",
+    "depression": "depression",
+    "anxiety": "anxiety",
+    "obesity": "obesity",
+    "osteoporosis": "osteoporosis",
+    "arthritis": "arthritis",
+    "rheumatoid arthritis": "rheumatoid arthritis",
+    # Risk factors and interventions
+    "physical exercise": "exercise",
+    "physical activity": "physical activity",
+    "smoking": "smoking",
+    "tobacco": "tobacco",
+    "alcohol": "alcohol",
+    "blood thinner": "anticoagulant",
+    "aspirin": "aspirin",
+    "statin": "statin",
+    "antibiotic": "antibiotics",
+    "vaccine": "vaccination",
+    "reduces the risk": None,  # noise
+    "increase the risk": None,  # noise
+    "associated with": None,  # noise
 }
 
 # Phrases to strip from claims before query building (noise)
@@ -280,17 +324,22 @@ class PubMedConnector:
             cleaned = re.sub(pattern, ' ', cleaned)
 
         # Step 3: Extract remaining medical words (not stop words, not already mapped)
+        # Prioritize longer words (more likely to be medical terms)
         remaining_words = re.findall(r'[a-zA-Z]+', cleaned)
         mapped_lower = {t.lower() for t in mapped_terms}
-        extra_terms = []
+        extra_terms_set = set()
+        extra_terms_list = []
         for w in remaining_words:
             wl = w.lower()
             if (wl not in STOP_WORDS
                     and len(wl) > 3
                     and wl not in mapped_lower
+                    and wl not in extra_terms_set
                     and not any(wl in t.lower() for t in mapped_terms)):
-                if wl not in extra_terms:
-                    extra_terms.append(wl)
+                extra_terms_set.add(wl)
+                extra_terms_list.append(wl)
+        # Sort by length descending — longer words are more specific/medical
+        extra_terms = sorted(extra_terms_list, key=len, reverse=True)
 
         # Step 4: Combine — mapped terms take priority, limit to 3 AND terms total
         query_terms = mapped_terms[:3]
