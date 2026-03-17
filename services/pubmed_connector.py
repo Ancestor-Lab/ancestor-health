@@ -356,24 +356,79 @@ class PubMedConnector:
         if not query_terms:
             return claim_text
 
-        # Step 5: For reference range claims, add "reference values" to find
-        # articles that define normal ranges rather than clinical management
-        is_reference_claim = any(
-            phrase in claim_lower
-            for phrase in ["normal range", "reference range", "within the normal",
-                           "below the normal", "above the normal", "falls within"]
-        )
-        if is_reference_claim and "reference values" not in query_terms:
-            # Append as OR to broaden, not narrow
-            ref_boost = ' AND ("reference values"[MeSH] OR "reference interval")'
-        else:
-            ref_boost = ""
+        # Step 5: Detect claim intent and add intent-specific query terms
+        intent = self._detect_claim_intent(claim_lower)
+        intent_boost = self._build_intent_boost(intent, query_terms)
 
         # Step 6: Build PubMed query with publication type filter
         term_query = " AND ".join(f'"{t}"' if ' ' in t else t for t in query_terms)
-        query = f"({term_query}{ref_boost}) AND (review[pt] OR guideline[pt] OR systematic review[pt] OR meta-analysis[pt])"
+        query = f"({term_query}{intent_boost}) AND (review[pt] OR guideline[pt] OR systematic review[pt] OR meta-analysis[pt])"
 
         return query
+
+    def _detect_claim_intent(self, claim_lower: str) -> str:
+        """Detect the intent pattern of a health claim.
+
+        Returns one of:
+            'diagnostic' — biomarker elevation/reduction indicates a condition
+            'above_below_range' — value is above/below a normal range
+            'within_range' — value falls within the normal range
+            'general' — no specific intent pattern detected
+        """
+        # Pattern 1: "[biomarker] + indicates/suggests/associated with + [condition]"
+        if re.search(
+            r'(?:indicate|suggest|associated\s+with|sign\s+of|'
+            r'indicative\s+of|consistent\s+with|may\s+(?:indicate|suggest|mean))',
+            claim_lower,
+        ):
+            return "diagnostic"
+
+        # Pattern 2: "[value] + above/below + normal range"
+        if re.search(
+            r'(?:above|below|higher\s+than|lower\s+than|exceeds?|beneath)\s+'
+            r'(?:the\s+)?(?:normal|reference|expected)',
+            claim_lower,
+        ):
+            return "above_below_range"
+
+        # Pattern 3: "[value] falls within normal range"
+        if re.search(
+            r'(?:falls?\s+(?:within|inside)|is\s+(?:within|inside|in)\s+(?:the\s+)?normal|'
+            r'within\s+(?:the\s+)?(?:normal|reference)\s+range)',
+            claim_lower,
+        ):
+            return "within_range"
+
+        # Also catch "normal range" mentions without explicit above/below
+        if re.search(r'(?:normal|reference)\s+range', claim_lower):
+            return "above_below_range"
+
+        return "general"
+
+    def _build_intent_boost(self, intent: str, query_terms: list[str]) -> str:
+        """Build intent-specific query additions based on claim type."""
+        qt_lower = {t.lower() for t in query_terms}
+
+        if intent == "diagnostic":
+            # Biomarker → condition claims need diagnostic/clinical significance context
+            boost_parts = []
+            if "diagnosis" not in qt_lower and "clinical significance" not in qt_lower:
+                boost_parts.append('(diagnosis OR "clinical significance" OR etiology)')
+            return " AND " + " AND ".join(boost_parts) if boost_parts else ""
+
+        elif intent == "above_below_range":
+            # Value above/below normal → need reference range definitions
+            if "reference values" not in qt_lower and "reference range" not in qt_lower:
+                return ' AND ("reference values"[MeSH] OR "reference range" OR "reference interval")'
+            return ""
+
+        elif intent == "within_range":
+            # Value within normal range → target reference value articles specifically
+            if "reference values" not in qt_lower:
+                return ' AND "reference values"[MeSH]'
+            return ""
+
+        return ""
 
     def _build_fallback_query(self, claim_text: str) -> str:
         """Build a broader fallback query without publication type filters.
